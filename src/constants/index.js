@@ -1,0 +1,3 @@
+export const ORDER_STATUSES = ['NEW', 'PREPARING', 'READY', 'DONE'];
+export const PAYMENT_MODES = ['CASH', 'ONLINE'];
+export const PAYMENT_STATUSES = ['PENDING', 'PENDING_VERIFICATION', 'PAID'];
