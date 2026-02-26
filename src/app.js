@@ -13,12 +13,30 @@ import buildOrderRoutes from './routes/orderRoutes.js';
 
 export const createApp = (io) => {
   const app = express();
+  const allowedOrigins = new Set(env.frontendUrls);
 
   app.use(helmet());
   app.use(compression());
   app.use(
     cors({
-      origin: env.frontendUrl,
+      origin: (origin, callback) => {
+        if (!origin) {
+          callback(null, true);
+          return;
+        }
+
+        const isAllowed =
+          allowedOrigins.has(origin) ||
+          origin.endsWith('.vercel.app') ||
+          origin.includes('.vercel.app:');
+
+        if (isAllowed) {
+          callback(null, true);
+          return;
+        }
+
+        callback(new Error(`CORS blocked for origin: ${origin}`));
+      },
       credentials: true,
     })
   );

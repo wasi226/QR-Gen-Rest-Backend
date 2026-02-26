@@ -9,6 +9,7 @@ import { seedDefaultUsers } from './utils/seedDefaultUsers.js';
 const bootstrap = async () => {
   await connectDb();
   await seedDefaultUsers();
+  const allowedOrigins = new Set(env.frontendUrls);
 
   // Create HTTP server first
   const httpServer = http.createServer();
@@ -16,7 +17,24 @@ const bootstrap = async () => {
   // Attach Socket.IO to the HTTP server BEFORE Express
   const io = new Server(httpServer, {
     cors: {
-      origin: env.frontendUrl,
+      origin: (origin, callback) => {
+        if (!origin) {
+          callback(null, true);
+          return;
+        }
+
+        const isAllowed =
+          allowedOrigins.has(origin) ||
+          origin.endsWith('.vercel.app') ||
+          origin.includes('.vercel.app:');
+
+        if (isAllowed) {
+          callback(null, true);
+          return;
+        }
+
+        callback(new Error(`Socket CORS blocked for origin: ${origin}`));
+      },
       methods: ['GET', 'POST', 'PATCH'],
     },
   });
