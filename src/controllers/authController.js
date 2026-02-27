@@ -1,3 +1,29 @@
+import { generateResetCode, validateResetCode, clearResetCode, sendResetCode } from '../utils/passwordReset.js';
+// Request password reset (send code)
+export const requestPasswordReset = asyncHandler(async (req, res) => {
+  const { username } = req.body;
+  if (!username) throw new ApiError(StatusCodes.BAD_REQUEST, 'Username required');
+  const normalizedUsername = String(username).trim().toLowerCase();
+  const user = await User.findOne({ username: normalizedUsername });
+  if (!user || !user.active) throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  const code = generateResetCode(normalizedUsername);
+  await sendResetCode(user, code);
+  return res.status(StatusCodes.OK).json({ success: true, message: 'Reset code sent.' });
+});
+
+// Confirm password reset (with code)
+export const confirmPasswordReset = asyncHandler(async (req, res) => {
+  const { username, code, newPassword } = req.body;
+  if (!username || !code || !newPassword) throw new ApiError(StatusCodes.BAD_REQUEST, 'All fields required');
+  const normalizedUsername = String(username).trim().toLowerCase();
+  const user = await User.findOne({ username: normalizedUsername });
+  if (!user || !user.active) throw new ApiError(StatusCodes.NOT_FOUND, 'User not found');
+  if (!validateResetCode(normalizedUsername, code)) throw new ApiError(StatusCodes.UNAUTHORIZED, 'Invalid or expired code');
+  user.password = String(newPassword);
+  await user.save();
+  clearResetCode(normalizedUsername);
+  return res.status(StatusCodes.OK).json({ success: true, message: 'Password reset successful.' });
+});
 import { StatusCodes } from 'http-status-codes';
 import { User } from '../models/User.js';
 import { ApiError } from '../utils/apiError.js';

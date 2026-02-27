@@ -7,6 +7,8 @@ import {
 	resetPassword,
 	updateMyProfile,
 	recoverPassword,
+	requestPasswordReset,
+	confirmPasswordReset,
 } from '../controllers/authController.js';
 import { requireAuth, requireRoles } from '../middleware/auth.js';
 
@@ -15,6 +17,8 @@ const router = Router();
 router.post('/bootstrap-admin', bootstrapAdmin);
 router.post('/login', login);
 router.post('/recover-password', recoverPassword);
+router.post('/request-password-reset', requestPasswordReset);
+router.post('/confirm-password-reset', confirmPasswordReset);
 router.get('/me', requireAuth, getMyProfile);
 router.patch('/update-profile', requireAuth, updateMyProfile);
 router.post('/register', requireAuth, requireRoles('ADMIN'), registerUser);
