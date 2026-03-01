@@ -1,6 +1,5 @@
-import crypto from 'crypto';
-import { User } from '../models/User.js';
-import { ApiError } from './apiError.js';
+import crypto from 'node:crypto';
+import { sendMail } from './email.js';
 
 const RESET_CODE_EXPIRY_MINUTES = 15;
 
@@ -29,7 +28,15 @@ export function clearResetCode(username) {
 }
 
 export async function sendResetCode(user, code) {
-  // For demo: log to console. In production, send email/SMS.
-  console.log(`Password reset code for ${user.username}: ${code}`);
-  // TODO: Integrate email/SMS provider here.
+  if (user.email) {
+    await sendMail({
+      to: user.email,
+      subject: 'Your Password Reset Code',
+      text: `Your password reset code is: ${code}`,
+      html: `<p>Your password reset code is: <b>${code}</b></p>`
+    });
+    console.log(`Password reset code sent to ${user.email}`);
+  } else {
+    console.log(`Password reset code for ${user.username}: ${code} (no email on file)`);
+  }
 }

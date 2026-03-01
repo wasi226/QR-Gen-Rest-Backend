@@ -17,6 +17,13 @@ const userSchema = new mongoose.Schema(
       required: true,
       minlength: 6,
     },
+    email: {
+      type: String,
+      required: false,
+      trim: true,
+      lowercase: true,
+      match: [/^\S+@\S+\.\S+$/, 'Invalid email address'],
+    },
     role: {
       type: String,
       enum: ['ADMIN', 'KITCHEN'],

@@ -1,4 +1,4 @@
-import http from 'http';
+import http from 'node:http';
 import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { connectDb } from './config/db.js';
@@ -77,7 +77,9 @@ const bootstrap = async () => {
   }, 60 * 60 * 1000); // Run every hour
 };
 
-bootstrap().catch((error) => {
+try {
+  await bootstrap();
+} catch (error) {
   console.error('Server bootstrap failed:', error);
   process.exit(1);
-});
+}

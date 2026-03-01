@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 import { env } from './env.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 export const connectDb = async () => {
   if (!env.mongoUri) {
