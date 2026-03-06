@@ -256,20 +256,22 @@ export const getSalesAnalytics = asyncHandler(async (req, res) => {
     }
   }
   
-  // Get only completed orders (DONE status)
-  const orders = await Order.find({
-    createdAt: { $gte: startDate, $lte: endDate },
-    status: 'DONE',
-    paymentStatus: 'PAID'
+  // Get all orders for the day (not just DONE orders for better visibility)
+  const allOrders = await Order.find({
+    createdAt: { $gte: startDate, $lte: endDate }
   });
   
-  // Group items and calculate sales
+  // Get only completed and paid orders for revenue calculation
+  const completedOrders = allOrders.filter(order => 
+    order.status === 'DONE' && order.paymentStatus === 'PAID'
+  );
+  
+  // Group items and calculate sales from completed orders
   const salesMap = new Map();
   let totalRevenue = 0;
-  let totalOrders = 0;
+  let totalItemsQuantity = 0;
   
-  orders.forEach(order => {
-    totalOrders++;
+  completedOrders.forEach(order => {
     order.items.forEach(item => {
       const key = item.name;
       const itemRevenue = item.qty * item.price;
@@ -286,23 +288,39 @@ export const getSalesAnalytics = asyncHandler(async (req, res) => {
         });
       }
       totalRevenue += itemRevenue;
+      totalItemsQuantity += item.qty;
     });
   });
   
-  // Convert map to array and sort by quantity (descending)
+  // Convert map to array and sort by revenue (descending)
   const salesData = Array.from(salesMap.values())
-    .sort((a, b) => b.quantity - a.quantity)
+    .sort((a, b) => b.revenue - a.revenue)
     .map(item => ({
       ...item,
-      percentage: totalOrders > 0 ? ((item.quantity / orders.reduce((sum, o) => sum + o.items.length, 0)) * 100).toFixed(2) : 0,
+      // Calculate percentage based on revenue share
+      percentage: totalRevenue > 0 ? ((item.revenue / totalRevenue) * 100).toFixed(2) : "0.00",
     }));
+  
+  // Calculate additional statistics
+  const activeOrders = allOrders.filter(order => 
+    order.status !== 'DONE' && order.status !== 'CANCELLED'
+  ).length;
+  
+  const pendingPayments = allOrders.filter(order => 
+    order.paymentStatus === 'PENDING' || order.paymentStatus === 'PENDING_VERIFICATION'
+  ).length;
   
   return res.status(StatusCodes.OK).json({
     success: true,
     data: {
       date: startDate.toISOString().split('T')[0],
-      totalOrders,
+      totalOrders: allOrders.length,
+      completedOrders: completedOrders.length,
+      activeOrders,
+      pendingPayments,
       totalRevenue: totalRevenue.toFixed(2),
+      totalItemsSold: totalItemsQuantity,
+      averageOrderValue: completedOrders.length > 0 ? (totalRevenue / completedOrders.length).toFixed(2) : "0.00",
       items: salesData,
     },
   });
