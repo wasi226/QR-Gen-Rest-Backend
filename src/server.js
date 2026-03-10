@@ -52,10 +52,20 @@ const bootstrap = async () => {
   });
 
   io.on('connection', (socket) => {
-    console.log(`Socket connected: ${socket.id}`);
+    console.log(`Socket connected: ${socket.id} from ${socket.handshake.address}`);
 
-    socket.on('disconnect', () => {
-      console.log(`Socket disconnected: ${socket.id}`);
+    socket.on('disconnect', (reason) => {
+      console.log(`Socket disconnected: ${socket.id} - Reason: ${reason}`);
+    });
+
+    socket.on('error', (error) => {
+      console.error(`Socket error for ${socket.id}:`, error);
+    });
+
+    // Send a welcome event to confirm connection
+    socket.emit('connection:success', { 
+      message: 'Successfully connected to server',
+      timestamp: new Date().toISOString()
     });
   });
 

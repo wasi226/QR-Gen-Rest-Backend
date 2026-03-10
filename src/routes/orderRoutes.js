@@ -8,6 +8,7 @@ import {
   cancelOrder,
   getSalesAnalytics,
   deleteOrdersByDate,
+  resetTodaysSales,
   getOrderByNumber,
   cancelOrderByNumber,
   getPaymentConfig,
@@ -27,6 +28,7 @@ const buildOrderRoutes = (io) => {
   router.get('/', requireAuth, requireRoles('ADMIN', 'KITCHEN'), getAllOrders);
   router.get('/analytics/sales', requireAuth, requireRoles('ADMIN'), getSalesAnalytics);
   router.delete('/delete-by-date', requireAuth, requireRoles('ADMIN'), deleteOrdersByDate);
+  router.post('/reset-today', requireAuth, requireRoles('ADMIN'), resetTodaysSales(io));
   router.patch('/:id/status', requireAuth, requireRoles('ADMIN', 'KITCHEN'), updateOrderStatus(io));
   router.patch('/:id/payment-status', requireAuth, requireRoles('ADMIN'), updatePaymentStatus(io));
   router.patch('/:id', requireAuth, requireRoles('ADMIN'), updateOrderItems(io));

@@ -22,7 +22,7 @@ export const getPaymentConfig = asyncHandler(async (req, res) => {
 
 export const createOrder = (io) =>
   asyncHandler(async (req, res) => {
-    const { tableNumber, items, paymentMode, customerName, orderType = 'TABLE', paymentReference } = req.body;
+    const { tableNumber, items, paymentMode, customerName, orderType = 'TABLE' } = req.body;
 
     // Validate orderType
     if (!['TABLE', 'PARCEL'].includes(orderType)) {
@@ -64,16 +64,31 @@ export const createOrder = (io) =>
 
     const totalAmount = calculateTotal(sanitizedItems);
 
+    let paymentStatus;
+    if (paymentMode === 'CASH') {
+      paymentStatus = 'PAID';
+    } else if (paymentMode === 'ONLINE') {
+      paymentStatus = 'PENDING_VERIFICATION';
+    } else {
+      paymentStatus = 'PENDING';
+    }
+
     const orderData = {
       orderNumber: await getNextOrderNumber(),
       items: sanitizedItems,
       totalAmount,
       paymentMode,
-      paymentStatus: paymentMode === 'ONLINE' ? 'PENDING_VERIFICATION' : 'PENDING',
+      paymentStatus,
       status: 'NEW',
       orderType,
       createdAt: new Date(),
     };
+
+    // Add payment verification details for CASH orders
+    if (paymentMode === 'CASH') {
+      orderData.paymentVerifiedAt = new Date();
+      orderData.paymentVerifiedBy = 'CUSTOMER';
+    }
 
     // Add tableNumber if order type is TABLE
     if (orderType === 'TABLE') {
@@ -88,6 +103,7 @@ export const createOrder = (io) =>
     const order = await Order.create(orderData);
 
     // Notify all admin/kitchen clients about the new order instantly.
+    console.log(`Emitting order:new event for order ${order.orderNumber}`);
     io.emit('order:new', order);
 
     return res.status(StatusCodes.CREATED).json({
@@ -98,11 +114,39 @@ export const createOrder = (io) =>
   });
 
 export const getAllOrders = asyncHandler(async (req, res) => {
-  const { orderNumber } = req.query;
+  const { orderNumber, date, today } = req.query;
 
   let query = {};
+  
+  // Filter by order number if provided
   if (orderNumber) {
     query = { orderNumber: Number(orderNumber) };
+  }
+  
+  // Filter by specific date if provided
+  if (date) {
+    const parsedDate = new Date(date + 'T00:00:00.000Z');
+    if (Number.isFinite(parsedDate.getTime())) {
+      const startDate = new Date(parsedDate);
+      startDate.setUTCHours(0, 0, 0, 0);
+      
+      const endDate = new Date(parsedDate);
+      endDate.setUTCHours(23, 59, 59, 999);
+      
+      query.createdAt = { $gte: startDate, $lte: endDate };
+    }
+  }
+  
+  // Filter by today's date if today=true is provided
+  if (today === 'true') {
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setHours(0, 0, 0, 0);
+    
+    const endDate = new Date(now);
+    endDate.setHours(23, 59, 59, 999);
+    
+    query.createdAt = { $gte: startDate, $lte: endDate };
   }
 
   const orders = await Order.find(query).sort({ createdAt: -1 });
@@ -118,13 +162,33 @@ export const updateOrderStatus = (io) =>
       throw new ApiError(StatusCodes.BAD_REQUEST, `status must be one of ${ORDER_STATUSES.join(', ')}`);
     }
 
-    const order = await Order.findByIdAndUpdate(id, { status }, { new: true });
+    // Prepare the update object
+    const updateObject = { status };
+    
+    // If order is being marked as DONE, automatically handle payment for CASH orders
+    if (status === 'DONE') {
+      // We need to get the current order first to check payment mode
+      const currentOrder = await Order.findById(id);
+      if (!currentOrder) {
+        throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found.');
+      }
+      
+      // If it's a CASH order and payment is still PENDING, mark it as PAID
+      if (currentOrder.paymentMode === 'CASH' && currentOrder.paymentStatus === 'PENDING') {
+        updateObject.paymentStatus = 'PAID';
+        updateObject.paymentVerifiedAt = new Date();
+        updateObject.paymentVerifiedBy = req.user?.username || 'SYSTEM';
+      }
+    }
+
+    const order = await Order.findByIdAndUpdate(id, updateObject, { new: true });
 
     if (!order) {
       throw new ApiError(StatusCodes.NOT_FOUND, 'Order not found.');
     }
 
     // Broadcast status updates for LCD and admin panel sync.
+    console.log(`Emitting order:updated event for order ${order.orderNumber} - Status: ${order.status}, PaymentStatus: ${order.paymentStatus}`);
     io.emit('order:updated', order);
 
     return res.status(StatusCodes.OK).json({ success: true, data: order });
@@ -176,7 +240,7 @@ export const updatePaymentStatus = (io) =>
 export const updateOrderItems = (io) =>
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { items, totalAmount } = req.body;
+    const { items } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       throw new ApiError(StatusCodes.BAD_REQUEST, 'Order must have at least one item.');
@@ -237,41 +301,60 @@ export const cancelOrder = (io) =>
 export const getSalesAnalytics = asyncHandler(async (req, res) => {
   const { date } = req.query;
   
-  // Get date range for the day
-  let startDate = new Date();
-  startDate.setHours(0, 0, 0, 0);
-  
-  let endDate = new Date();
-  endDate.setHours(23, 59, 59, 999);
+  // Always use UTC to avoid timezone issues, but adjust for local business day
+  const now = new Date();
+  let startDate, endDate;
   
   // If specific date is provided, use that
   if (date) {
-    const parsedDate = new Date(date);
-    if (!isNaN(parsedDate.getTime())) {
+    const parsedDate = new Date(date + 'T00:00:00.000Z');
+    if (Number.isFinite(parsedDate.getTime())) {
       startDate = new Date(parsedDate);
-      startDate.setHours(0, 0, 0, 0);
+      startDate.setUTCHours(0, 0, 0, 0);
       
       endDate = new Date(parsedDate);
+      endDate.setUTCHours(23, 59, 59, 999);
+    } else {
+      // If invalid date provided, default to today
+      startDate = new Date(now);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(now);
       endDate.setHours(23, 59, 59, 999);
     }
+  } else {
+    // Default to today only - strict daily reset
+    startDate = new Date(now);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(now);
+    endDate.setHours(23, 59, 59, 999);
   }
   
-  // Get all orders for the day (not just DONE orders for better visibility)
+  // Get all orders for the specific day only
   const allOrders = await Order.find({
     createdAt: { $gte: startDate, $lte: endDate }
-  });
+  }).sort({ createdAt: -1 });
   
-  // Get only completed and paid orders for revenue calculation
-  const completedOrders = allOrders.filter(order => 
-    order.status === 'DONE' && order.paymentStatus === 'PAID'
+  // Get completed orders - DONE status for both cash and online orders
+  const completedOrdersCount = allOrders.filter(order => 
+    order.status === 'DONE'
+  ).length;
+  
+  // Get revenue-eligible orders: 
+  // - CASH orders that are DONE (payment is immediate)
+  // - ONLINE orders that are DONE AND PAID
+  const revenueEligibleOrders = allOrders.filter(order => 
+    order.status === 'DONE' && (
+      (order.paymentMode === 'CASH' && order.paymentStatus !== 'PENDING_VERIFICATION') ||
+      (order.paymentMode === 'ONLINE' && order.paymentStatus === 'PAID')
+    )
   );
   
-  // Group items and calculate sales from completed orders
+  // Group items and calculate sales from revenue-eligible orders
   const salesMap = new Map();
   let totalRevenue = 0;
   let totalItemsQuantity = 0;
   
-  completedOrders.forEach(order => {
+  revenueEligibleOrders.forEach(order => {
     order.items.forEach(item => {
       const key = item.name;
       const itemRevenue = item.qty * item.price;
@@ -307,21 +390,31 @@ export const getSalesAnalytics = asyncHandler(async (req, res) => {
   ).length;
   
   const pendingPayments = allOrders.filter(order => 
-    order.paymentStatus === 'PENDING' || order.paymentStatus === 'PENDING_VERIFICATION'
+    (order.paymentMode === 'ONLINE' && order.paymentStatus === 'PENDING_VERIFICATION') ||
+    order.paymentStatus === 'PENDING'
   ).length;
+  
+  // Format the response date to ensure consistency
+  const responseDate = startDate.toISOString().split('T')[0];
   
   return res.status(StatusCodes.OK).json({
     success: true,
     data: {
-      date: startDate.toISOString().split('T')[0],
+      date: responseDate,
       totalOrders: allOrders.length,
-      completedOrders: completedOrders.length,
+      completedOrders: completedOrdersCount,
       activeOrders,
       pendingPayments,
       totalRevenue: totalRevenue.toFixed(2),
       totalItemsSold: totalItemsQuantity,
-      averageOrderValue: completedOrders.length > 0 ? (totalRevenue / completedOrders.length).toFixed(2) : "0.00",
+      averageOrderValue: revenueEligibleOrders.length > 0 ? (totalRevenue / revenueEligibleOrders.length).toFixed(2) : "0.00",
       items: salesData,
+      // Add metadata for debugging
+      meta: {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      }
     },
   });
 });
@@ -350,6 +443,36 @@ export const deleteOrdersByDate = asyncHandler(async (req, res) => {
     message: `Deleted ${result.deletedCount} orders between ${startDate} and ${endDate}.`,
     data: {
       deletedCount: result.deletedCount,
+    },
+  });
+});
+
+// Reset today's sales data (delete all orders from today)
+export const resetTodaysSales = (io) => asyncHandler(async (req, res) => {
+  const now = new Date();
+  const startDate = new Date(now);
+  startDate.setHours(0, 0, 0, 0);
+  
+  const endDate = new Date(now);
+  endDate.setHours(23, 59, 59, 999);
+
+  const result = await Order.deleteMany({
+    createdAt: { $gte: startDate, $lte: endDate },
+  });
+
+  // Emit event to refresh all connected clients
+  io.emit('sales:reset', {
+    message: 'Today\'s sales data has been reset',
+    resetAt: new Date(),
+    deletedCount: result.deletedCount
+  });
+
+  return res.status(StatusCodes.OK).json({
+    success: true,
+    message: `Successfully reset today's sales data. Deleted ${result.deletedCount} orders.`,
+    data: {
+      deletedCount: result.deletedCount,
+      resetAt: new Date(),
     },
   });
 });
